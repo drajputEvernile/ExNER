@@ -1,0 +1,34 @@
+V1_MV.zip
+
+# Data
+Data/
+
+# Local NER weights, plus the HF cache dirs
+Models/gliner_low/
+Models/layout_heron/
+Docling_OCR_new/models
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+
+# Caches
+.cache/
+**/.cache/
+
+# Node / Review UI frontend
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.vite/
+**/.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
