@@ -1,0 +1,189 @@
+{
+  "test": null,
+  "train_optimistic": {
+    "fields": {
+      "dob": {
+        "trained": true,
+        "v0": {
+          "pages": 729,
+          "right": 827,
+          "wrong": 85,
+          "missed": 48,
+          "accuracy": 86.1,
+          "precision": 90.7,
+          "recall": 94.5,
+          "false_positives": 25,
+          "candidate_recall": 92.7
+        },
+        "model": {
+          "pages": 729,
+          "right": 839,
+          "wrong": 0,
+          "missed": 57,
+          "accuracy": 93.6,
+          "precision": 100.0,
+          "recall": 93.6,
+          "false_positives": 0,
+          "candidate_recall": 92.7
+        }
+      },
+      "member_id": {
+        "trained": true,
+        "v0": {
+          "pages": 744,
+          "right": 913,
+          "wrong": 78,
+          "missed": 113,
+          "accuracy": 82.7,
+          "precision": 92.1,
+          "recall": 89.0,
+          "false_positives": 19,
+          "candidate_recall": 83.5
+        },
+        "model": {
+          "pages": 744,
+          "right": 931,
+          "wrong": 0,
+          "missed": 131,
+          "accuracy": 87.7,
+          "precision": 100.0,
+          "recall": 87.7,
+          "false_positives": 0,
+          "candidate_recall": 83.5
+        }
+      },
+      "name": {
+        "trained": true,
+        "v0": {
+          "pages": 744,
+          "right": 836,
+          "wrong": 143,
+          "missed": 150,
+          "accuracy": 74.0,
+          "precision": 85.4,
+          "recall": 84.8,
+          "false_positives": 11,
+          "candidate_recall": 80.4
+        },
+        "model": {
+          "pages": 744,
+          "right": 847,
+          "wrong": 2,
+          "missed": 178,
+          "accuracy": 82.5,
+          "precision": 99.8,
+          "recall": 82.6,
+          "false_positives": 0,
+          "candidate_recall": 80.4
+        }
+      },
+      "electronic_signature": {
+        "trained": true,
+        "v0": {
+          "pages": 714,
+          "right": 725,
+          "wrong": 41,
+          "missed": 7,
+          "accuracy": 93.8,
+          "precision": 94.6,
+          "recall": 99.0,
+          "false_positives": 5,
+          "candidate_recall": 83.8
+        },
+        "model": {
+          "pages": 714,
+          "right": 729,
+          "wrong": 17,
+          "missed": 23,
+          "accuracy": 94.8,
+          "precision": 97.7,
+          "recall": 96.9,
+          "false_positives": 1,
+          "candidate_recall": 83.8
+        }
+      },
+      "dos": {
+        "trained": true,
+        "v0": {
+          "pages": 726,
+          "right": 763,
+          "wrong": 424,
+          "missed": 58,
+          "accuracy": 61.3,
+          "precision": 64.3,
+          "recall": 92.9,
+          "false_positives": 265,
+          "candidate_recall": 90.7
+        },
+        "model": {
+          "pages": 726,
+          "right": 869,
+          "wrong": 3,
+          "missed": 64,
+          "accuracy": 92.8,
+          "precision": 99.7,
+          "recall": 93.1,
+          "false_positives": 1,
+          "candidate_recall": 90.7
+        }
+      },
+      "page_no": {
+        "trained": true,
+        "v0": {
+          "pages": 722,
+          "right": 865,
+          "wrong": 30,
+          "missed": 4,
+          "accuracy": 96.2,
+          "precision": 96.6,
+          "recall": 99.5,
+          "false_positives": 5,
+          "candidate_recall": 97.4
+        },
+        "model": {
+          "pages": 722,
+          "right": 869,
+          "wrong": 0,
+          "missed": 17,
+          "accuracy": 98.1,
+          "precision": 100.0,
+          "recall": 98.1,
+          "false_positives": 0,
+          "candidate_recall": 97.4
+        }
+      }
+    },
+    "kv_overall": {
+      "v0": {
+        "right": 4929,
+        "wrong": 801,
+        "missed": 380,
+        "pages": 4379,
+        "accuracy": 80.7
+      },
+      "model": {
+        "right": 5084,
+        "wrong": 22,
+        "missed": 470,
+        "pages": 4379,
+        "accuracy": 91.2
+      }
+    },
+    "overall": {
+      "v0": {
+        "right": 4929,
+        "wrong": 801,
+        "missed": 380,
+        "pages": 4379,
+        "accuracy": 80.7
+      },
+      "model": {
+        "right": 5084,
+        "wrong": 22,
+        "missed": 470,
+        "pages": 4379,
+        "accuracy": 91.2
+      }
+    }
+  }
+}

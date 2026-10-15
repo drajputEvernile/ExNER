@@ -29,6 +29,7 @@ import pandas as pd
 
 from Heading.extract import DETECTORS
 from Util import config
+from Util.bands import outside_band
 from Util.dates import find_dates
 from Util.geometry import Box, Word, median_height, union_boxes
 from Util.keys import KV_ROOT, KeyHit
@@ -60,6 +61,9 @@ COLUMNS = [
     # heading layout
     "heading_height_ratio", "heading_key_overlap", "heading_key_field", "heading_value_overlap",
     "heading_whole_line", "heading_line_count", "heading_ends_colon", "heading_position", "heading_tail_words",
+    # Heron bands of the page (blank = no band): where the header band ends, where the footer band starts,
+    # and whether a header / footer-region candidate lies outside it (1) or inside (0)
+    "band_header_bottom", "band_footer_top", "band_outside",
     # trained model (blank in a v0 run): probability, what it extracted, what it selected, heading level it gave
     "model_score", "model_accepted", "model_selected", "model_level",
 ]
@@ -419,6 +423,8 @@ def page_rows(record_id: str, page_count: int, result, fields: list[str]) -> lis
         "page_frac": _ratio(page_index, page_count),
         "n_keys_page": len(result.hits),
         "n_trusted_keys_page": sum(hit.trusted for hit in result.hits),
+        "band_header_bottom": "" if result.bands.header_bottom is None else result.bands.header_bottom,
+        "band_footer_top": "" if result.bands.footer_top is None else result.bands.footer_top,
     }
     seen: set[str] = set()
     out: list[dict] = []
@@ -546,4 +552,9 @@ def document_rows(result, run_id: str, model_version: str, fields: list[str]) ->
         row["record_distinct_values"] = distinct.get(field, 0)
         # Blank, not NaN, so integer columns stay integers in the CSV.
         out.append({column: row.get(column, "") for column in COLUMNS})
+    frame = pd.DataFrame(out, columns=COLUMNS)
+    if not frame.empty:
+        outside, _ = outside_band(frame)
+        frame["band_outside"] = [("" if pd.isna(value) else int(value)) for value in outside]
+        out = frame.to_dict("records")
     return out

@@ -47,6 +47,7 @@ from Training.model import (
     KINDS,
     LEVEL_POSITIVE,
     NUMERIC,
+    NUMERIC_BANDS,
     FieldModel,
     Version,
     add_vocab,
@@ -194,7 +195,15 @@ def train(
     models: tuple[str, ...] = KINDS,
     test_count: int | None = None,
     version: str | None = None,
+    bands: bool = False,
 ) -> list[Path]:
+    if bands:
+        # Experimental: the Heron-band columns join the features (the list is shared with features.json,
+        # evaluate and the pipeline). Needs a dataset whose tables carry band_header_bottom / band_footer_top
+        # (Training/backfill_bands.py adds them to reviewed runs made before).
+        if tuple(models) != ("kv",):
+            raise SystemExit("--bands trains the KV model only: use --model kv")
+        NUMERIC.extend(column for column in NUMERIC_BANDS if column not in NUMERIC)
     frame, ds_manifest, ds_folder = load(dataset)
     held = None
     if test_count and split_name == "train":
@@ -281,6 +290,7 @@ def train(
             "fields_trained": sorted(trained_models),
             "fields": fields,
             "git_commit": _git_commit(),
+            **({"bands": "features", "experimental": True} if bands else {}),
         }
         (folder / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -328,6 +338,11 @@ def main() -> int:
         choices=["kv", "heading", "both"],
         help="which model to train: KV_Extraction (kv), Heading_Detector (heading) or both",
     )
+    parser.add_argument(
+        "--bands",
+        action="store_true",
+        help="experimental: add the Heron header / footer band columns as ranker features (KV only); the version is marked experimental",
+    )
     args = parser.parse_args()
     train(
         args.dataset,
@@ -337,6 +352,7 @@ def main() -> int:
         KINDS if args.model == "both" else (args.model,),
         args.test_count or None,
         args.version or None,
+        args.bands,
     )
     return 0
 

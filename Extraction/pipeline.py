@@ -33,6 +33,7 @@ from Page_No.extract import extract_page as page_no_page
 from Training.features import COLUMNS as CANDIDATE_COLUMNS
 from Training.features import SHEETS, document_rows, field_value, kv_value_words
 from Training.normalize import norm_heading
+from Util.bands import Bands
 from Util.geometry import Word, page_size, words_from_page
 from Util.keys import KeyHit, find_key_hits
 from Util.mentions import REPEAT_FIELDS, repeat_mentions
@@ -66,6 +67,8 @@ class PageResult:
     hits: list[KeyHit]
     words: list[Word] = field(default_factory=list)
     rows: dict[str, list] = field(default_factory=dict)
+    # Heron header / footer bands (needs the page image; empty when headings did not run)
+    bands: Bands = field(default_factory=Bands)
 
 
 def extract_page_kv(page: dict) -> PageResult:
@@ -112,7 +115,7 @@ def _kv_words(result: PageResult) -> set[int]:
 def extract_page_headings(record_id: str, result: PageResult) -> None:
     """Heading candidates of every configured detector, added to the page's rows (needs the page image)."""
     kv_words = _kv_words(result)
-    found = heading_page(record_id, result.page, result.words, result.hits, result.page_w, result.page_h)
+    found, result.bands = heading_page(record_id, result.page, result.words, result.hits, result.page_w, result.page_h)
     for rows in found.values():
         for row in rows:
             indexes = {word.index for word in row.words}

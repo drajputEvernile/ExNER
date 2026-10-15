@@ -57,6 +57,9 @@ def list_versions() -> list[dict[str, Any]]:
     ]
     for name in _version_names():
         found = _folders(name)
+        # Experimental versions (manifest "experimental": true) run from the CLI only; the UI does not list them.
+        if any(_manifest(folder).get("experimental") for folder in found.values()):
+            continue
         manifests = {prefix: _manifest(folder) for prefix, folder in found.items()}
         models = " + ".join(_TITLES[prefix] for prefix in found)
         trained = [m.get("trained_at") for m in manifests.values() if m.get("trained_at")]

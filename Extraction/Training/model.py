@@ -44,6 +44,7 @@ import pandas as pd
 from Heading.extract import DETECTORS, common_heading
 from Member_ID.id_types import guess_id_type
 from Util import config
+from Util.bands import outside_band
 
 NUMERIC = [
     "rule_score", "rule_accepted", "rule_selected",
@@ -61,6 +62,8 @@ NUMERIC = [
     # derived within the (page, field) group
     "score_rank", "score_gap", "same_value_in_group",
 ]
+# Heron-band features, only in a version trained with --bands (manifest "bands": "features").
+NUMERIC_BANDS = ["band_header_bottom", "band_footer_top", "band_outside", "band_dist"]
 CATEGORICAL = [
     "key", "key_match", "key_trusted_reason", "region", "relation", "rule_source", "detail_cat",
     "heading_key_field", "heading_position", "id_type",
@@ -114,6 +117,7 @@ def prepare(frame: pd.DataFrame) -> pd.DataFrame:
     frame.loc[missing, "id_type"] = [
         guess_id_type(str(key) or str(text)) for text, key in zip(frame.loc[missing, "key_text"], frame.loc[missing, "key"])
     ]
+    frame["band_outside"], frame["band_dist"] = outside_band(frame)
     heading = frame["field"].isin(DETECTORS)
     frame["heading_common"] = np.nan
     frame.loc[heading, "heading_common"] = [common_heading(str(text)) for text in frame.loc[heading, "value"]]
@@ -225,6 +229,13 @@ class Version:
         self.kind = kind
         self.numeric: list[str] = features.get("numeric") or NUMERIC
         self.categorical: list[str] = features.get("categorical") or CATEGORICAL
+        # Experimental band handling (manifest "bands"): "filter" drops candidates outside the Heron
+        # band before the rankers see them; "features" only trained the band columns in (numeric above).
+        try:
+            manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            manifest = {}
+        self.band_filter = manifest.get("bands") == "filter"
         self.fields: dict[str, FieldModel] = {}
         for field, threshold in thresholds.items():
             path = folder / f"ranker_{field}.txt"
@@ -268,6 +279,14 @@ class Version:
             rows = prepare(log[log["field"] == field])
             if rows.empty:
                 continue
+            if self.band_filter:
+                # Outside the page's Heron band: never accepted or selected, and not ranked against the rest.
+                out = rows.index[rows["band_outside"] == 1]
+                log.loc[out, ["model_score", "model_level"]] = ""
+                log.loc[out, ["model_accepted", "model_selected"]] = "0"
+                rows = rows.drop(index=out)
+                if rows.empty:
+                    continue
             probs, chosen, levels = self.score(rows, field)
             log.loc[rows.index, "model_score"] = [f"{p:.4f}" for p in probs]
             log.loc[rows.index, "model_accepted"] = ["1" if p >= model.threshold else "0" for p in probs]

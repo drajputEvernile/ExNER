@@ -36,6 +36,7 @@ from pathlib import Path
 from PIL import Image
 
 from Util import config
+from Util.bands import BAND_DETECTOR, Bands, page_bands
 from Util.geometry import Box, Word, group_lines, median_height, union_boxes
 from Util.keys import KeyHit
 
@@ -175,24 +176,33 @@ def load_detectors() -> dict[str, str | None]:
     return out
 
 
-def detect(name: str, image: Image.Image) -> list[Detection]:
-    """Heading-class boxes (image pixels) at or above FLOOR_SCORE."""
+def detect_all(name: str, image: Image.Image) -> list[Detection]:
+    """Every box (image pixels) of any layout class at or above FLOOR_SCORE: the heading classes
+    for the heading candidates, page_header / page_footer for the per-page bands (Util/bands.py)."""
     import torch
 
     processor, model = _load(name)
-    classes = DETECTORS[name].classes
     inputs = processor(images=[image], return_tensors="pt")
     with torch.inference_mode():
         outputs = model(**inputs)
     result = processor.post_process_object_detection(
         outputs, threshold=FLOOR_SCORE, target_sizes=[(image.height, image.width)]
     )[0]
-    found: list[Detection] = []
-    for score, label, box in zip(result["scores"], result["labels"], result["boxes"]):
-        det_class = model.config.id2label[int(label)]
-        if det_class in classes:
-            found.append(Detection(det_class, round(float(score), 4), tuple(float(v) for v in box)))
-    return found
+    return [
+        Detection(model.config.id2label[int(label)], round(float(score), 4), tuple(float(v) for v in box))
+        for score, label, box in zip(result["scores"], result["labels"], result["boxes"])
+    ]
+
+
+def heading_detections(name: str, found: list[Detection]) -> list[Detection]:
+    """The heading-class boxes of detect_all's result."""
+    classes = DETECTORS[name].classes
+    return [item for item in found if item.det_class in classes]
+
+
+def detect(name: str, image: Image.Image) -> list[Detection]:
+    """Heading-class boxes (image pixels) at or above FLOOR_SCORE."""
+    return heading_detections(name, detect_all(name, image))
 
 
 def _words_in(box: tuple[float, float, float, float], words: list[Word], slack: float) -> list[Word]:
@@ -423,13 +433,18 @@ def extract_page(
     hits: list[KeyHit],
     page_w: float,
     page_h: float,
-) -> dict[str, list[HeadingRow]]:
-    """Heading candidates of every configured detector for one page (image opened once)."""
+) -> tuple[dict[str, list[HeadingRow]], Bands]:
+    """(heading candidates of every configured detector, the page's Heron bands) for one page
+    (image opened once, each detector run once)."""
     names = heading_fields()
     image = page_image(record_id, page) if names else None
     if image is None:
-        return {name: [] for name in names}
-    return {
-        name: page_headings(detect(name, image), image.size, words, hits, page_w, page_h)
-        for name in names
-    }
+        return {name: [] for name in names}, Bands()
+    rows: dict[str, list[HeadingRow]] = {}
+    bands = Bands()
+    for name in names:
+        found = detect_all(name, image)
+        rows[name] = page_headings(heading_detections(name, found), image.size, words, hits, page_w, page_h)
+        if name == BAND_DETECTOR:
+            bands = page_bands(found, image.size, words, page_w, page_h)
+    return rows, bands
