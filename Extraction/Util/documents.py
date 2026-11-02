@@ -49,6 +49,24 @@ def _load_json(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def normalize_page(page: dict) -> dict:
+    """A page with its words, width and height at the top level.
+
+    Some OCR output keeps them in pagesMeta[0] ({"width", "height", "words": [{"content", "polygon"}]})
+    and has no top-level "words"; lift them so every reader sees the same layout."""
+    if not isinstance(page, dict) or page.get("words"):
+        return page
+    metas = page.get("pagesMeta")
+    meta = metas[0] if isinstance(metas, list) and metas and isinstance(metas[0], dict) else None
+    if not meta or not meta.get("words"):
+        return page
+    lifted = {**page, "words": meta["words"]}
+    for key in ("width", "height"):
+        if not lifted.get(key) and meta.get(key):
+            lifted[key] = meta[key]
+    return lifted
+
+
 def _stem(name: str) -> str:
     return Path(name).stem.casefold()
 
@@ -65,6 +83,7 @@ def ocr_pages(folder: Path) -> list[dict]:
         for page in found:
             if not isinstance(page, dict):
                 continue
+            page = normalize_page(page)
             name = str(page.get("fileName") or "").casefold()
             if not name:
                 anonymous.append(page)
@@ -109,7 +128,7 @@ def _read_document(record_id: str, folder: Path, image_names: list[str] | None =
         pages = data.get("pages")
         if not isinstance(pages, list) or not pages:
             return None, f"{path.name} has no pages"
-        return Document(record_id=record_id, pages=pages, source=str(path)), ""
+        return Document(record_id=record_id, pages=[normalize_page(page) for page in pages], source=str(path)), ""
     pages = ocr_pages(folder)
     if not pages:
         return None, "its OCR JSON files have no pages"
