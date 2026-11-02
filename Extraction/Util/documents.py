@@ -1,8 +1,10 @@
 """Documents for a run: the record folders under Raw_Input, each looked up in OCR_Input.
 
 The raw folder says which records exist ({Raw_Input}/{RecordId}/ holding the page images); a
-record's OCR is {OCR_Input}/{RecordId}/*.json (the largest JSON in the folder). A record with no
-usable OCR is reported, never silently dropped.
+record's OCR is every {OCR_Input}/{RecordId}/*.json. Only the OCR pages whose fileName matches a
+page image in the raw folder are extracted (by file name, case-insensitive; the extension may
+differ), so extra OCR pages are ignored. A record with no matching OCR is reported, never silently
+dropped.
 """
 
 from __future__ import annotations
@@ -47,19 +49,81 @@ def _load_json(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def _read_document(record_id: str, folder: Path) -> tuple[Document | None, str]:
-    """(document, "") or (None, why the folder has no usable OCR)."""
+def _stem(name: str) -> str:
+    return Path(name).stem.casefold()
+
+
+def ocr_pages(folder: Path) -> list[dict]:
+    """Every page of every OCR JSON in the folder (a page seen twice keeps the one with more words)."""
+    pages: dict[str, dict] = {}
+    anonymous: list[dict] = []
+    for path in sorted((item for item in folder.glob("*.json") if item.is_file()), key=lambda item: _natural(item.name)):
+        data = _load_json(path)
+        found = data.get("pages") if data else None
+        if not isinstance(found, list):
+            continue
+        for page in found:
+            if not isinstance(page, dict):
+                continue
+            name = str(page.get("fileName") or "").casefold()
+            if not name:
+                anonymous.append(page)
+            elif name not in pages or len(page.get("words") or []) > len(pages[name].get("words") or []):
+                pages[name] = page
+    return list(pages.values()) + anonymous
+
+
+def _match_pages(pages: list[dict], image_names: list[str]) -> tuple[list[dict], list[str]]:
+    """(the OCR page of each image that has one, in image order; the OCR page names that matched no image)."""
+    exact = {str(page.get("fileName") or "").casefold(): page for page in pages if page.get("fileName")}
+    by_stem: dict[str, list[dict]] = {}
+    for page in pages:
+        if page.get("fileName"):
+            by_stem.setdefault(_stem(str(page["fileName"])), []).append(page)
+    matched: list[dict] = []
+    used: set[int] = set()
+    for name in image_names:
+        page = exact.get(name.casefold())
+        if page is None and len(by_stem.get(_stem(name), [])) == 1:
+            page = by_stem[_stem(name)][0]
+        if page is not None and id(page) not in used:
+            used.add(id(page))
+            # the image's own name, so the page image is found by the name the tables carry
+            matched.append(page if page.get("fileName") == name else {**page, "fileName": name})
+    unmatched = [str(page.get("fileName") or "(no fileName)") for page in pages if id(page) not in used]
+    return matched, unmatched
+
+
+def _read_document(record_id: str, folder: Path, image_names: list[str] | None = None) -> tuple[Document | None, str]:
+    """(document, "") or (None, why the folder has no usable OCR).
+
+    With image_names (the record's page images) only the OCR pages matching those file names are kept."""
     jsons = sorted(path for path in folder.glob("*.json") if path.is_file())
     if not jsons:
         return None, "no OCR JSON in its OCR folder"
-    path = max(jsons, key=lambda item: item.stat().st_size)
-    data = _load_json(path)
-    if not data:
-        return None, f"{path.name} is not readable OCR JSON"
-    pages = data.get("pages")
-    if not isinstance(pages, list) or not pages:
-        return None, f"{path.name} has no pages"
-    return Document(record_id=record_id, pages=pages, source=str(path)), ""
+    if image_names is None:
+        path = max(jsons, key=lambda item: item.stat().st_size)
+        data = _load_json(path)
+        if not data:
+            return None, f"{path.name} is not readable OCR JSON"
+        pages = data.get("pages")
+        if not isinstance(pages, list) or not pages:
+            return None, f"{path.name} has no pages"
+        return Document(record_id=record_id, pages=pages, source=str(path)), ""
+    pages = ocr_pages(folder)
+    if not pages:
+        return None, "its OCR JSON files have no pages"
+    matched, unmatched = _match_pages(pages, image_names)
+    if not matched:
+        return None, (
+            f"no OCR page matches the page images (images: {', '.join(image_names[:5])}; "
+            f"OCR pages: {', '.join(str(page.get('fileName')) for page in pages[:5])})"
+        )
+    if unmatched:
+        logger.info("%s: %s OCR pages have no page image and are left out (%s)", record_id, len(unmatched), ", ".join(unmatched[:5]))
+    if len(matched) < len(image_names):
+        logger.warning("%s: %s of %s page images have no OCR page", record_id, len(image_names) - len(matched), len(image_names))
+    return Document(record_id=record_id, pages=matched, source=str(folder)), ""
 
 
 def load_local_documents(root: Path) -> list[Document]:
@@ -74,6 +138,14 @@ def load_local_documents(root: Path) -> list[Document]:
             continue
         documents.append(document)
     return documents
+
+
+def raw_images(folder: Path) -> list[str]:
+    """File names of the page images in a record's raw folder, in natural order."""
+    return sorted(
+        (path.name for path in folder.iterdir() if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES),
+        key=_natural,
+    )
 
 
 def raw_records(raw_root: Path) -> list[tuple[str, int]]:
@@ -106,13 +178,9 @@ def load_documents(raw_root: Path, ocr_root: Path) -> tuple[list[Document], list
         if folder is None:
             missing.append(MissingOcr(record_id, images, "no folder of that name in OCR_Input"))
             continue
-        document, why = _read_document(record_id, folder)
+        document, why = _read_document(record_id, folder, raw_images(raw_root / record_id))
         if document is None:
             missing.append(MissingOcr(record_id, images, why))
             continue
-        if len(document.pages) != images:
-            logger.warning(
-                "%s: %s page images in Raw_Input but %s pages in the OCR JSON", record_id, images, len(document.pages)
-            )
         documents.append(document)
     return documents, missing, records

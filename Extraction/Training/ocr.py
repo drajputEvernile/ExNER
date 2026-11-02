@@ -2,45 +2,33 @@
 
 from __future__ import annotations
 
-import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from Util import config
+from Util.documents import ocr_pages
 from Util.geometry import Word, group_lines, page_size, words_from_page
 
 
-def _record_json(record_id: str) -> Path | None:
-    folder = Path(config.OCR_Input) / record_id
-    if not folder.is_dir():
-        return None
-    jsons = [path for path in folder.glob("*.json") if path.is_file()]
-    return max(jsons, key=lambda path: path.stat().st_size) if jsons else None
-
-
 @lru_cache(maxsize=8)
-def _pages(path: str, mtime: float) -> dict[str, dict[str, Any]]:
-    del mtime
-    try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    pages = data.get("pages") if isinstance(data, dict) else None
-    if not isinstance(pages, list):
-        return {}
-    return {
-        str(page.get("fileName") or "").casefold(): page
-        for page in pages
-        if isinstance(page, dict)
-    }
+def _pages(folder: str, stamp: tuple) -> dict[str, dict[str, Any]]:
+    del stamp
+    return {str(page.get("fileName") or "").casefold(): page for page in ocr_pages(Path(folder))}
 
 
 def load_page(record_id: str, file_name: str) -> dict[str, Any] | None:
-    path = _record_json(record_id)
-    if path is None:
+    folder = Path(config.OCR_Input) / record_id
+    if not folder.is_dir():
         return None
-    return _pages(str(path), path.stat().st_mtime).get(file_name.casefold())
+    stamp = tuple((path.name, path.stat().st_mtime) for path in sorted(folder.glob("*.json")))
+    pages = _pages(str(folder), stamp)
+    page = pages.get(file_name.casefold())
+    if page is None:
+        stem = Path(file_name).stem.casefold()
+        same = [item for key, item in pages.items() if Path(key).stem == stem]
+        page = same[0] if len(same) == 1 else None
+    return page
 
 
 def page_words(record_id: str, file_name: str) -> tuple[list[Word], float, float]:
