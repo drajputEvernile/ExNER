@@ -304,4 +304,7 @@ def apply_models(log: pd.DataFrame, version: str, heading_version: str | None = 
         seen.add((kind, name))
         if has_version(name, kind):
             log = load_version(name, kind).apply(log)
-    return log
+    # The model takes one DOS per page; an admit + discharge pair on the page is the DOS (a range).
+    from DOS.extract import pair_admit_discharge
+
+    return pair_admit_discharge(log)
