@@ -20,6 +20,17 @@ from Util.geometry import words_from_page
 from pipeline import extract_page_kv
 
 
+def shape(value, depth=0, limit=4):
+    """Keys and types of a JSON value, no text (lists show their length and first item's shape)."""
+    if isinstance(value, dict):
+        if depth >= limit:
+            return f"dict({len(value)} keys)"
+        return {key: shape(item, depth + 1, limit) for key, item in list(value.items())[:25]}
+    if isinstance(value, list):
+        return f"list[{len(value)}] of " + (str(shape(value[0], depth + 1, limit)) if value else "nothing")
+    return type(value).__name__
+
+
 def main() -> int:
     only = sys.argv[1] if len(sys.argv) > 1 else ""
     print(f"Raw_Input : {config.Raw_Input}  exists={config.Raw_Input.is_dir()}")
@@ -56,6 +67,7 @@ def main() -> int:
             data = _load_json(jsons[0]) or {}
             print(f"   json top-level keys: {list(data)[:8]}")
             page = pages[0]
+            print("   page shape:", json.dumps({k: shape(v) for k, v in page.items() if k not in ("content",)}, default=str)[:2500])
             print(f"   page keys: {list(page)[:12]}")
             words = page.get("words") or []
             print(f"   words: {len(words)}; first word keys: {list(words[0]) if words and isinstance(words[0], dict) else words[:1]}")
