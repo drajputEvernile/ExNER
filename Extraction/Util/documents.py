@@ -3,8 +3,8 @@
 The raw folder says which records exist ({Raw_Input}/{RecordId}/ holding the page images); a
 record's OCR is every {OCR_Input}/{RecordId}/*.json. Only the OCR pages whose fileName matches a
 page image in the raw folder are extracted (by file name, case-insensitive; the extension may
-differ), so extra OCR pages are ignored. A record with no matching OCR is reported, never silently
-dropped.
+differ), so extra OCR pages are ignored. When no name matches at all, the pages are paired with
+the images in order (equal counts) or all extracted, with a warning: never nothing.
 """
 
 from __future__ import annotations
@@ -115,13 +115,22 @@ def _read_document(record_id: str, folder: Path, image_names: list[str] | None =
         return None, "its OCR JSON files have no pages"
     matched, unmatched = _match_pages(pages, image_names)
     if not matched:
-        return None, (
-            f"no OCR page matches the page images (images: {', '.join(image_names[:5])}; "
-            f"OCR pages: {', '.join(str(page.get('fileName')) for page in pages[:5])})"
-        )
+        # No file name matches at all (images renamed or split): never extract nothing.
+        if len(pages) == len(image_names):
+            matched = [{**page, "fileName": name} for page, name in zip(pages, image_names)]
+            logger.warning("%s: no OCR file name matches the images; paired %s pages with the images in order", record_id, len(pages))
+        else:
+            matched = pages
+            logger.warning(
+                "%s: no OCR file name matches the %s images (%s OCR pages); extracting all OCR pages "
+                "(images: %s; OCR: %s)",
+                record_id, len(image_names), len(pages), ", ".join(image_names[:3]),
+                ", ".join(str(page.get("fileName")) for page in pages[:3]),
+            )
+        unmatched = []
     if unmatched:
         logger.info("%s: %s OCR pages have no page image and are left out (%s)", record_id, len(unmatched), ", ".join(unmatched[:5]))
-    if len(matched) < len(image_names):
+    elif len(matched) < len(image_names):
         logger.warning("%s: %s of %s page images have no OCR page", record_id, len(image_names) - len(matched), len(image_names))
     return Document(record_id=record_id, pages=matched, source=str(folder)), ""
 
