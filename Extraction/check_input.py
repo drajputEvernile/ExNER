@@ -55,6 +55,13 @@ def main() -> int:
         for page in usable:
             result = extract_page_kv(page)
             valued += any(result.rows[name] for name in result.rows)
+        for page in matched:
+            if not words_from_page(page):
+                meta = (page.get("pagesMeta") or [{}])[0] if isinstance(page.get("pagesMeta"), list) else {}
+                print(f"   NO WORDS: {page.get('fileName')}  pagesMeta={'pagesMeta' in page} "
+                      f"wordCount={meta.get('wordCount')} lineCount={meta.get('lineCount')} "
+                      f"words_in_meta={len(meta.get('words') or [])} lines_in_meta={len(meta.get('lines') or [])} "
+                      f"content_chars={len(str(page.get('content') or ''))} keys={list(page)[:8]}")
         totals["matched"] += len(matched)
         totals["with_words"] += len(usable)
         totals["with_values"] += valued
