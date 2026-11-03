@@ -167,8 +167,60 @@ def geometry_confidence(word_gap: int) -> float:
     return round(max(0.55, 0.92 - 0.12 * word_gap), 4)
 
 
-def nearest(sentence: str, key_at: tuple[int, int] | None, raws: list[dict] | None = None) -> tuple[str, float]:
-    """ID token closest to the key. A token after the key wins a tie. Leading zeros stay."""
+def _owned_value(hit: KeyHit, hits: list[KeyHit]):
+    """Which window positions this key may read: a value belongs to the label printed before it
+    on its own line, so a key never takes another label's value whatever the distance.
+      - on the key's line: no other label between them ('MRN: 3502262043(EV)  FIN: 84021092972'
+        gives FIN only the second), and a value left of the key has no label before it;
+      - on another line: no label before the value on its line ('SSN:' over 'MRN: MM0000005272',
+        'MRN.' over 'BIRTH DATE. 12211999') and no label stacked between the key and the value
+        ('MRN' / 'Birthday:' / value). A table row under its header has no label: unchanged.
+    Takes (start, end) in the window sentence, like nearest()."""
+    height = max(hit.box.height(), 1.0)
+    slack = 0.5 * height
+    others = [other.box for other in hits if other is not hit]
+    spans: list[tuple[int, int, Word]] = []
+    offset = 0
+    for word in hit.value_words:
+        spans.append((offset, offset + len(word.content), word))
+        offset += len(word.content) + 1
+
+    def same_line(a, b) -> bool:
+        return abs(a.cy - b.cy) < 0.6 * height
+
+    def allowed(start: int, end: int) -> bool:
+        del end
+        word = next((w for s, e, w in spans if s <= start < e), None)
+        if word is None or not others:
+            return True
+        box, key = word.box, hit.box
+        if same_line(box, key):
+            line = [other for other in others if same_line(other, key)]
+            if box.left >= key.right - slack:
+                return not any(key.right - slack <= other.left and other.right <= box.left + slack for other in line)
+            if box.right <= key.left + slack:
+                return not any(other.right <= key.left + slack for other in line)
+            return True
+        if any(same_line(other, box) and other.right <= box.left + slack for other in others):
+            return False
+        low, high = sorted((key.cy, box.cy))
+        return not any(
+            low + 0.6 * height < other.cy < high - 0.6 * height
+            and min(other.right, box.right, key.right) > max(other.left, min(box.left, key.left))
+            for other in others
+        )
+
+    return allowed
+
+
+def nearest(
+    sentence: str,
+    key_at: tuple[int, int] | None,
+    raws: list[dict] | None = None,
+    allowed=None,
+) -> tuple[str, float]:
+    """ID token closest to the key. A token after the key wins a tie. Leading zeros stay.
+    `allowed(start, end)` drops tokens another label owns (_owned_value)."""
     text = sentence or ""
     if key_at is None:
         return "", 0.0
@@ -181,7 +233,8 @@ def nearest(sentence: str, key_at: tuple[int, int] | None, raws: list[dict] | No
         # 'Phone: 5055493103' / 'Fax:3303767416' is a phone number, not an ID.
         if not (_PHONE_LABEL.fullmatch(previous) or _PHONE_LABEL.match(part)):
             for token, start, end in _id_pieces(part):
-                found.append((token, offset + start, offset + end))
+                if allowed is None or allowed(offset + start, offset + end):
+                    found.append((token, offset + start, offset + end))
         offset += len(part)
         if part:
             previous = part
@@ -315,7 +368,8 @@ def extract_box(hit: KeyHit, hits: list[KeyHit] | None = None, words: list[Word]
         row.value_at = [word]
         return row
     raws = predict(hit.value_text, LABELS)
-    value, score = nearest(hit.value_text, key_span(hit.value_text, hit.value_words, hit.word_indexes), raws)
+    key_at = key_span(hit.value_text, hit.value_words, hit.word_indexes)
+    value, score = nearest(hit.value_text, key_at, raws, _owned_value(hit, hits) if hits else None)
     if value and not is_member_id_value(value):
         value, score = "", 0.0
     best_text = ""
