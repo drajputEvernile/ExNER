@@ -4,7 +4,9 @@ Rules from Data/examp/esign.csv:
   - Words are read in raw OCR order (sorting by line position interleaves lines).
   - The signer is returned as printed, and any credential from suffixes.txt is the
     designation: "Agati, Alicia" / "APRN.CNP", "LAUBERT MATTHEW" / "CNP".
-  - Name right after the key: credential optional (any key).
+  - Name right after the key: credential optional (any key). Role words before it are
+    skipped ("Signed by: Attending Physician John Smith, MD").
+  - A name stops at a word that is never part of a name (Util/not_name_words.txt).
   - Name right before the key (nothing usable after it): credential optional for
     strong keys ("... by", "Electronically/Digitally ..."), required for weak keys.
   - Name elsewhere in the box: credential required.
@@ -22,6 +24,7 @@ from Util.dates import find_dates, normalize_date
 from Util.keys import KeyHit, extract_field_keys
 from Util.geometry import is_edge_region, median_height, region_priority
 from Util.model import predict
+from Util.names import is_not_name
 from Util.tokens import Token, key_token_span, ordered_tokens, same_line
 from Util.window import expand_for_key
 
@@ -121,7 +124,7 @@ def _is_name_word(text: str) -> bool:
     if not _NAME_WORD.match(text):
         return False
     bare = text.rstrip(".")
-    return len(bare) == 1 or bare.casefold() not in _NOT_NAME
+    return len(bare) == 1 or (bare.casefold() not in _NOT_NAME and not is_not_name(bare))
 
 
 def _next_meaningful(tokens: list[Token], index: int, stop: int) -> int | None:
@@ -198,7 +201,15 @@ def split_name_designation(printed: str) -> tuple[str, str]:
 
 def _after_key(tokens: list[Token], key_last: int, line_h: float) -> _Name | None:
     index = key_last + 1
-    while index < len(tokens) and tokens[index].text.casefold() in _CONNECTORS:
+    # Connectors and role words before the name: 'Signed by: Attending Physician John Smith, MD'.
+    while index < len(tokens) and (
+        tokens[index].text.casefold() in _CONNECTORS
+        or _PUNCT_ONLY.match(tokens[index].text)
+        or (
+            is_not_name(tokens[index].text)
+            and abs(tokens[index].word.box.cy - tokens[key_last].word.box.cy) <= 0.6 * line_h
+        )
+    ):
         index += 1
     if index >= len(tokens):
         return None
