@@ -7,7 +7,11 @@ Acceptance (all member_id keys):
       * letters + digits: HG758668, EMA20577880, G06330
       * digits/letters with hyphens: 134-26-2945, 000859374-1473, D24-58988
       * masked SSN only when last 4 digits exist: XXX-XX-0594 (reject xxx-xx-xxxx)
-  - Reject phones and slash-dates.
+  - Reject phones as printed ((330) 376-7416, 330-376-7416), any number right after a
+    phone / fax label, and slash-dates. A bare 10-digit number is an ID (MRN 3502262043).
+  - A system code printed onto the ID is dropped: '3502776450(EV)' -> 3502776450.
+  - A key that ends its line reads the ID wrapped to the start of the next line
+    ('... MRN: 3502776450(EV)  FIN:' / '86013950877').
 
 Chart is hash-required (Chart# / Chart # only). Similar OCR keys match via fuzzy matcher.
 No keyless member-id extraction — only catalog key hits. An untrusted key counts only when
@@ -25,7 +29,10 @@ from Util.geometry import Word, is_edge_region, region_priority
 from Util.model import predict
 
 LABELS = ["ID", "identifier"]
-_PHONE = re.compile(r"^\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}$")
+# A phone number as printed: (330) 376-7416, 330-376-7416, 330.376.7416. A bare 10-digit number
+# is an ID (MRN 3502262043, 0000284763) unless a phone label is printed right before it.
+_PHONE = re.compile(r"^(?:\(\d{3}\)\s?\d{3}[-.\s]?\d{4}|\d{3}[-.\s]\d{3}[-.\s]?\d{4})$")
+_PHONE_LABEL = re.compile(r"(?i)^(?:phone|ph|tel|telephone|fax|cell|mobile|pager)\b\W*")
 _SLASH_DATE = re.compile(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$")
 # Punctuation and OCR specks glued to the edge of an ID token ("48497'" is the ID 48497).
 _EDGE_CHARS = "#.,;:|'\"`‘’“”"
@@ -131,11 +138,15 @@ def _word_gap(sentence: str, key_at: tuple[int, int], token_at: tuple[int, int])
 
 # The id sits in the key's own word: '(ID #718,' or 'MRN:88234.0'.
 _GLUED_ID = re.compile(r"(?i)[#:]\s*([A-Za-z0-9]+(?:[.\-][A-Za-z0-9]+)*)")
+# A system / facility code printed onto the id: '3502776450(EV)' is the MRN 3502776450.
+_CODE_SUFFIX = re.compile(r"\([A-Za-z]{1,6}\)[^A-Za-z0-9]*$")
 
 
 def _id_token(raw: str) -> str:
-    token = _EDGE.sub("", raw.strip())
-    return accept(token)
+    token = accept(_EDGE.sub("", raw.strip()))
+    if not token and _CODE_SUFFIX.search(raw):
+        token = accept(_EDGE.sub("", _CODE_SUFFIX.sub("", raw.strip())))
+    return token
 
 
 def _id_pieces(part: str) -> list[tuple[str, int, int]]:
@@ -163,12 +174,17 @@ def nearest(sentence: str, key_at: tuple[int, int] | None, raws: list[dict] | No
         return "", 0.0
     found = []
     offset = 0
+    previous = ""
     for part in text.split(" "):
         if offset:
             offset += 1
-        for token, start, end in _id_pieces(part):
-            found.append((token, offset + start, offset + end))
+        # 'Phone: 5055493103' / 'Fax:3303767416' is a phone number, not an ID.
+        if not (_PHONE_LABEL.fullmatch(previous) or _PHONE_LABEL.match(part)):
+            for token, start, end in _id_pieces(part):
+                found.append((token, offset + start, offset + end))
         offset += len(part)
+        if part:
+            previous = part
     if not found:
         return "", 0.0
     token, start, end = min(found, key=lambda item: _word_gap(text, key_at, (item[1], item[2])))
@@ -230,9 +246,46 @@ def _column_value(hit: KeyHit, words: list[Word]) -> str:
     return min(found)[1] if found else ""
 
 
+def _wrapped_value(hit: KeyHit, hits: list[KeyHit], words: list[Word]) -> tuple[str, Word] | None:
+    """The ID of a key that ends its line, printed at the start of the next line: a long header
+    line wrapped ('Patient: Doe, Jane  MRN: 3502776450(EV)  FIN:' / '86013950877').
+
+    Only when the key's line is not a row of bare labels (it holds a digit, or the key has its
+    colon) and the ID stands alone at the next line's left margin (or a label follows it)."""
+    own = set(hit.word_indexes)
+    height = max(hit.box.height(), 1.0)
+    line = [word for word in words if abs(word.box.cy - hit.box.cy) < 0.6 * height]
+    if not line or any(word.index not in own and word.box.left >= hit.box.right - 1 for word in line):
+        return None
+    labelled = any(word.content.rstrip().endswith(":") for word in line if word.index in own)
+    if not labelled and not any(ch.isdigit() for word in line for ch in word.content):
+        return None
+    below = [
+        word for word in words
+        if -0.3 * height < word.box.top - hit.box.bottom < 1.5 * height
+        and abs(word.box.cy - hit.box.cy) >= 0.6 * height
+    ]
+    if not below:
+        return None
+    first = min(below, key=lambda word: word.box.left)
+    if first.box.left > min(word.box.left for word in line) + 2.0 * height:
+        return None
+    rest = [
+        word for word in below
+        if word is not first and abs(word.box.cy - first.box.cy) < 0.6 * height and word.box.left > first.box.left
+    ]
+    if rest:
+        after = min(rest, key=lambda word: word.box.left)
+        if not any(after.index in other.word_indexes for other in hits):
+            return None
+    value = _id_token(first.content)
+    return (value, first) if value else None
+
+
 def extract_box(hit: KeyHit, hits: list[KeyHit] | None = None, words: list[Word] | None = None) -> IdHit:
     """One overlay box → one row. Accepted only when value matches ID patterns. A key in a
-    table's header row reads its column: the value under it, never the next header."""
+    table's header row reads its column: the value under it, never the next header. A key that
+    ends its line reads the ID wrapped to the start of the next line."""
     if hits and _in_header_row(hit, hits):
         value = _column_value(hit, words or hit.value_words)
         if value:
@@ -246,6 +299,21 @@ def extract_box(hit: KeyHit, hits: list[KeyHit] | None = None, words: list[Word]
                 accepted=True,
                 source="column",
             )
+    wrapped = _wrapped_value(hit, hits, words) if hits and words else None
+    if wrapped:
+        value, word = wrapped
+        row = IdHit(
+            key=hit.key,
+            region=hit.region,
+            sentence=f"{hit.value_text} {word.content}".strip(),
+            ner_text=value,
+            value=value,
+            score=geometry_confidence(0),
+            accepted=True,
+            source="wrapped",
+        )
+        row.value_at = [word]
+        return row
     raws = predict(hit.value_text, LABELS)
     value, score = nearest(hit.value_text, key_span(hit.value_text, hit.value_words, hit.word_indexes), raws)
     if value and not is_member_id_value(value):
