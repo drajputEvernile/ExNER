@@ -31,7 +31,8 @@
     "D.OS",
     "DIAS",
     "Visit",
-    "Appointment"
+    "Appointment",
+    "Provider Initial Contact Time"
   ],
   "admit": [
     "Admit",
