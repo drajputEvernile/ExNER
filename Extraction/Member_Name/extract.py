@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass, field
 
 from Electronic_Signature.extract import is_credential
+from Member_DOB.extract import is_birth_date, page_dates
 from Member_ID.extract import is_member_id_value
 from Util.keys import KeyHit, linked
 from Util.names import is_not_name
@@ -40,7 +41,7 @@ from Util.geometry import (
     union_boxes,
 )
 from Util.dates import find_dates
-from Util.tokens import Token, key_token_span, ordered_tokens, same_line
+from Util.tokens import Token, key_token_span, ordered_tokens, same_line, spaced
 from Util.window import expand_for_key, words_in_box
 
 LABELS = ["person"]
@@ -197,7 +198,7 @@ def _parse(
 
 
 def _printed(tokens: list[Token], parsed: _Parsed, text: str) -> str:
-    return text[tokens[parsed.first].start : tokens[parsed.last].end].strip(" ,;:")
+    return spaced(text[tokens[parsed.first].start : tokens[parsed.last].end]).strip(" ,;:")
 
 
 def _stop_positions(tokens: list[Token], hits: list[KeyHit], skip: KeyHit | None) -> set[int]:
@@ -462,6 +463,9 @@ def extract_running_header(words, page_h: float, hits: list[KeyHit]) -> NameHit 
 
 
 _LINE_LABEL = re.compile(r"(?i)^(mrn|dob|acct|account|page|ssn|patient|name|id|pt|ptnt)$")
+# The close of a bracketed record number after the name ('Myers David (MRN 70167294)'), even when
+# OCR misreads the label ('Lane. James Ear.1720238)').
+_ID_CLOSE = re.compile(r"\d{5,}\)$")
 
 
 def _line_groups(words, page_h: float) -> list[tuple[str, list]]:
@@ -489,20 +493,43 @@ def _line_groups(words, page_h: float) -> list[tuple[str, list]]:
     return grouped
 
 
+def _born_after(tokens: list[Token], parsed: _Parsed, births: set[int], text: str) -> bool:
+    """The name is printed right before a birth date ('2 GloriaVega 01/17/1946') and the person
+    model reads it as a person (a procedure line 'Hip Replacement 04/04/2018' is not one)."""
+    if parsed.last + 1 not in births:
+        return False
+    raws = predict(spaced(text), LABELS)
+    start = len(spaced(text[: tokens[parsed.first].start]))
+    end = len(spaced(text[: tokens[parsed.last].end]))
+    return _ner_support(raws, start, end)[1] >= _NER_MIN
+
+
 def extract_edge_lines(words, page_h: float, hits: list[KeyHit]) -> list[NameHit]:
     """A header or footer line that is a demographic strip: a person name next to a date,
-    an id, or a label (MRN, DOB, Page), and no credential on the line (that is a provider)."""
+    an id, or a label (MRN, DOB, Page), and no credential on the line (that is a provider).
+    A label counts only as printed ('Patient', 'MRN:'), not inside prose ('the patient and I').
+    With no label or id, a person name right before a birth date ('2 GloriaVega 01/17/1946')."""
     found: list[NameHit] = []
+    dates_on_page = page_dates(words)
     for band, line in _line_groups(words, page_h):
         if any(is_credential(word.content) for word in line):
             continue
         tokens, text = ordered_tokens(line)
         if not tokens:
             continue
-        labels = [token for token in tokens if _LINE_LABEL.fullmatch(token.text.strip(":#."))]
+        labels = [
+            token for token in tokens
+            if (_LINE_LABEL.fullmatch(token.text.strip(":#.")) and not token.text[:1].islower())
+            or _ID_CLOSE.search(token.text)
+        ]
         dated = bool(find_dates(text))
         numbered = [token for token in tokens if is_member_id_value(token.text)]
-        if not labels and not (dated and numbered):
+        births = {
+            index for index, token in enumerate(tokens)
+            if (match := next(iter(find_dates(token.text)), None)) and is_birth_date(match.group(1), dates_on_page)
+        }
+        anchored = bool(labels) or (dated and bool(numbered))
+        if not anchored and not births:
             continue
         anchors = {id(token) for token in labels + numbered}
         anchor_at = [index for index, token in enumerate(tokens) if id(token) in anchors]
@@ -516,7 +543,12 @@ def extract_edge_lines(words, page_h: float, hits: list[KeyHit]) -> list[NameHit
             before = tokens[parsed.first - 1].text.strip(":,.").casefold() if parsed.first else ""
             if before in _PROVIDER_BEFORE:
                 continue
-            distance = min(abs(parsed.last - index) for index in anchor_at)
+            if anchor_at:
+                distance = min(abs(parsed.last - index) for index in anchor_at)
+            elif _born_after(tokens, parsed, births, text):
+                distance = 1
+            else:
+                continue
             if distance > 4:
                 continue
             if best is None or distance < best[0]:

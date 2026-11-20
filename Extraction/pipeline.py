@@ -77,7 +77,7 @@ def extract_page_kv(page: dict) -> PageResult:
         "dob": dob_page(hits, words, page_w, page_h),
         "member_id": id_page(hits, words),
         "name": name_page(hits, words, page_w, page_h),
-        "electronic_signature": esig_page(hits),
+        "electronic_signature": esig_page(hits, words),
         "dos": dos_page(hits, words, page_h),
         "page_no": page_no_page(words, page_h),
     }
